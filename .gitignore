@@ -1,0 +1,35 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.sln.docstates
+*.userprefs
+
+# NuGet
+packages/
+*.nupkg
+**/[Pp]ackages/*
+
+# Build
+[Bb]uild/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+
+# VS
+.vs/
+*.csproj.user
+*.csproj.dotnet-user.json
+
+# Rider
+.idea/
+*.sln.iml
+
+# macOS
+.DS_Store
+
+# Releases
+Releases/
+Releases/*

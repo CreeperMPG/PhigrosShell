@@ -67,3 +67,11 @@ VFS 通过识别类属性（而非字段）构建目录树，自动处理 `IDict
 - `FluentConsole` — 彩色控制台输出
 - `SixLabors.ImageSharp` — 图片处理（二维码生成）
 - `ZXing.Net` + `ZXing.Net.Bindings.ImageSharp` — 二维码编解码
+
+## Vibe-Coding 信息
+
+Phigros Shell 的虚拟文件系统和部分功能均为 Vibe-Coding 产物。
+
+Phigros Shell 在 1.2.0 版本分离了 Shell 和存档核心处理模块（[Phigros Archive](https://github.com/CreeperMPG/PhigrosArchive)）。模块的分离由 AI Agent 完成，但 Agent 仅执行了分离操作。
+
+1.3.0 版本使用了 [PhiKits.Save](https://github.com/CreeperMPG/PhiKits.Save) 作为存档处理的核心，其信息见其 README.md。

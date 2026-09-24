@@ -1,4 +1,3 @@
-using PhigrosArchive.Utils;
 using PhigrosShell.Utils;
 using PhigrosShell.VFS;
 
@@ -35,7 +34,15 @@ internal class LsCommand : CommandBase
         var entries = directory.ListEntries(resolved);
         string? keyword = ConsoleUtils.GetArgumentValue(args, "keyword")?.Trim();
 
+        if (entries.Count == 0)
+        {
+            // 空目录不是错误；这里必须先返回，否则下面 entries.Max() 会抛
+            FluentConsole.DarkGray.Line("(empty)");
+            return true;
+        }
+
         int maxNameLength = Math.Max(entries.Max(e => e.Name.Length), 8);
+        int shown = 0;
 
         foreach (var entry in entries)
         {
@@ -49,6 +56,8 @@ internal class LsCommand : CommandBase
                 if (!nameMatch && !previewMatch)
                     continue;
             }
+
+            shown++;
 
             switch (entry.Type)
             {
@@ -74,6 +83,10 @@ internal class LsCommand : CommandBase
             Console.ResetColor();
             Console.WriteLine();
         }
+
+        // 目录不空、但按 keyword 一条都没筛出来时给个回音，免得看起来像命令没执行
+        if (shown == 0)
+            FluentConsole.DarkGray.Line("(no match)");
 
         return true;
     }

@@ -33,3 +33,5 @@ x86/
 # Releases
 Releases/
 Releases/*
+# 本地发布产物（dotnet publish 的输出）
+_pub/

@@ -1,19 +1,19 @@
-using PhigrosArchive;
-using PhigrosArchive.Save;
+using CreeperMPG.PhiKits.Save.CloudStorage;
 
 namespace PhigrosShell.Mapping;
 
 /// <summary>
 /// VDirectory 根目录映射对象。
-/// 字段 -> VDirectory 不遍历；属性 -> VDirectory 可访问。
+/// 字段 → VDirectory 不遍历；属性 → VDirectory 可访问。
 /// /SaveFiles/0/ → ShellSlotRoot 映射
 /// </summary>
 internal class ShellPlayerRoot
 {
     /// <summary>字段，隐藏于 VDirectory</summary>
-    internal PhigrosPlayerInfo? PlayerInfo;
+    internal PlayerObject? PlayerInfo;
 
-    /// <summary>属性，VDirectory 可遍历</summary>
+    // ── 属性（VDirectory 可遍历） ──
+
     public string Nickname => PlayerInfo?.Nickname ?? "(null)";
     public string ShortID => PlayerInfo?.ShortID ?? "(null)";
     public string ObjectID => PlayerInfo?.UserObjectID ?? "(null)";

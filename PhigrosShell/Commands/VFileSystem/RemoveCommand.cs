@@ -1,4 +1,3 @@
-using PhigrosArchive.Utils;
 using PhigrosShell.Utils;
 using PhigrosShell.VFS;
 
@@ -7,7 +6,7 @@ namespace PhigrosShell.Commands.VFileSystem;
 internal class RemoveCommand : CommandBase
 {
     public override string Name => "Remove";
-    public override string Description => "Remove a directory or reset a value. Usage: remove <path>";
+    public override string Description => "Remove an entry (dictionary key / list item) or clear a value. Usage: remove <path>";
 
     public override bool Execute(string command, List<ShellArgument> args)
     {
@@ -32,23 +31,34 @@ internal class RemoveCommand : CommandBase
         string resolvedPath = PathUtils.ResolvePath(Shell.Path, inputPath);
 
         var directory = new VDirectory(Shell.CurrentPlayerRoot!);
-        if (!directory.Exists(resolvedPath))
-        {
-            ConsoleUtils.WriteError("Path not found: " + resolvedPath);
-            return true;
-        }
 
-        if (directory.IsDisallowToModify(resolvedPath))
+        // 字典/列表 → 真删除；普通属性 → 置 null（受类型白名单限制）
+        switch (directory.Remove(resolvedPath))
         {
-            ConsoleUtils.WriteWarning("This entry is protected and cannot be removed.");
-            return true;
-        }
+            case WriteResult.Success:
+                ConsoleUtils.WriteSuccess(Program.Localization["VfsRemoved"]);
+                break;
 
-        // Set to default value (0 / empty)
-        if (directory.Set(resolvedPath, "0"))
-            ConsoleUtils.WriteSuccess("Removed / reset successfully.");
-        else
-            ConsoleUtils.WriteError("Failed to remove.");
+            case WriteResult.NotFound:
+                ConsoleUtils.WriteError(Program.Localization["VfsPathNotFound", new object[] { resolvedPath }]);
+                break;
+
+            case WriteResult.NotAllowed:
+                ConsoleUtils.WriteWarning(Program.Localization["VfsRemoveNotAllowed"]);
+                break;
+
+            case WriteResult.Protected:
+                ConsoleUtils.WriteWarning(Program.Localization["VfsProtected"]);
+                break;
+
+            case WriteResult.ReadOnlyProperty:
+                ConsoleUtils.WriteWarning(Program.Localization["VfsReadOnly"]);
+                break;
+
+            default:
+                ConsoleUtils.WriteError(Program.Localization["VfsRemoveFailed"]);
+                break;
+        }
 
         return true;
     }

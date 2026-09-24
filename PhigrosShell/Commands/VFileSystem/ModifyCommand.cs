@@ -1,4 +1,3 @@
-using PhigrosArchive.Utils;
 using PhigrosShell.Utils;
 using PhigrosShell.VFS;
 
@@ -32,22 +31,33 @@ internal class ModifyCommand : CommandBase
         string newValue = string.Join(" ", args.Skip(1).Select(a => a.Value));
 
         var directory = new VDirectory(Shell.CurrentPlayerRoot!);
-        if (!directory.Exists(resolvedPath))
-        {
-            ConsoleUtils.WriteError("Path not found: " + resolvedPath);
-            return true;
-        }
 
-        if (directory.IsReadOnly(resolvedPath))
+        switch (directory.Set(resolvedPath, newValue))
         {
-            ConsoleUtils.WriteWarning("This entry is read-only.");
-            return true;
-        }
+            case WriteResult.Success:
+                ConsoleUtils.WriteSuccess(Program.Localization["VfsModified"]);
+                break;
 
-        if (directory.Set(resolvedPath, newValue))
-            ConsoleUtils.WriteSuccess("Modified successfully.");
-        else
-            ConsoleUtils.WriteError("Failed to modify.");
+            case WriteResult.NotFound:
+                ConsoleUtils.WriteError(Program.Localization["VfsPathNotFound", new object[] { resolvedPath }]);
+                break;
+
+            case WriteResult.Protected:
+                ConsoleUtils.WriteWarning(Program.Localization["VfsProtected"]);
+                break;
+
+            case WriteResult.ReadOnlyProperty:
+                ConsoleUtils.WriteWarning(Program.Localization["VfsReadOnly"]);
+                break;
+
+            case WriteResult.BadValue:
+                ConsoleUtils.WriteError(Program.Localization["VfsBadValue"]);
+                break;
+
+            default:
+                ConsoleUtils.WriteError(Program.Localization["VfsModifyFailed"]);
+                break;
+        }
 
         return true;
     }

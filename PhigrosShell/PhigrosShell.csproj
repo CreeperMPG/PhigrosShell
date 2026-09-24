@@ -7,10 +7,12 @@
     <Nullable>enable</Nullable>
     <AssemblyName>phishell</AssemblyName>
     <RootNamespace>PhigrosShell</RootNamespace>
+    <AssemblyVersion></AssemblyVersion>
+    <FileVersion></FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\PhigrosArchive\PhigrosArchive.csproj" />
+    <ProjectReference Include="..\..\CreeperMPG.PhiKits.Save\CreeperMPG.PhiKits.Save\src\CreeperMPG.PhiKits.Save\CreeperMPG.PhiKits.Save.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -21,7 +23,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- 界面文案（扁平键值对） -->
     <EmbeddedResource Include="Resources/lang/*.json" />
+    <!-- 更新日志（结构化，与界面文案分开存放） -->
+    <EmbeddedResource Include="Resources/changelog/*.json" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,58 @@
+{
+  "entries": [
+    {
+      "version": "1.3.0",
+      "date": "2026-09-24 00:02",
+      "changes": [
+        "Adapted to the new PhiKits.Save API, supporting Phigros 3.16.0 ~ 3.20.0",
+        "Rewrote directory management, fixing bugs where some directories could not be modified",
+        "Save slots are now sorted by modification time, newest first"
+      ]
+    },
+    {
+      "version": "1.2.0",
+      "date": "2026-05-29 00:02",
+      "changes": [
+        "Optimized code structure",
+        "Added Tree command: visual directory tree with hierarchical expansion.",
+        "Fixed upload bug of removing cloud save accidentally.",
+        "Disallow repeated login.",
+        "Minor bug fixes and improvements."
+      ]
+    },
+    {
+      "version": "1.1.1",
+      "date": "2026-05-11 00:28",
+      "changes": [
+        "Added Alias Command, allowing users to create custom command shortcuts. alias <name> <command>; unalias <name>",
+        "Display the minimum accuracy for increasing RKS when showing P3B27."
+      ]
+    },
+    {
+      "version": "1.1.0",
+      "date": "2025-09-18 00:09",
+      "changes": [
+        "Added QRCode Login: login -qr/-qrcode",
+        "Added localization.",
+        "Improved error handling and reporting.",
+        "Rebuilt the structure of filesystem, added multi-slot support",
+        "Merged all save operating command to 'save' command (save fetch, save phibest, save export, save upload...).",
+        "Added DownloadPhiInfo command, which allows you to download TSV files from the Internet.",
+        "Minor bug fixes and performance improvements."
+      ]
+    },
+    {
+      "version": "1.0.0",
+      "date": "2025-08-03 20:34",
+      "changes": [
+        "Initial release.",
+        "Basic console operations and command parser.",
+        "Basic commands: about, clear, config, exit, help, pause.",
+        "Virtual file system (available when logged in). Commands: cd, clear-all, ls, modify, print, remove, touch",
+        "Able to login Phigros account, operate save file and summary, save, and upload.",
+        "Support operating save file and summary, including checking save file, syncing summary, and getting phi best.",
+        "Config file support, including setting difficulty.tsv and info.tsv paths."
+      ]
+    }
+  ]
+}

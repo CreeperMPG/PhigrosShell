@@ -1,8 +1,8 @@
-using PhigrosArchive.Abstractions;
-using PhigrosArchive.Save;
-using PhigrosArchive.Save.Data;
-using PhigrosArchive.Utils;
-using PhigrosArchive;
+using CreeperMPG.PhiKits.Save.Abstractions;
+using CreeperMPG.PhiKits.Save.Data;
+using CreeperMPG.PhiKits.Save.Data.SaveEntries;
+using PhigrosShell.Check;
+using PhigrosShell.Mapping;
 using PhigrosShell.Utils;
 
 namespace PhigrosShell.Commands.Phigros;
@@ -12,52 +12,19 @@ internal class SaveCommand : CommandBase
     public override string Name => "Save";
     public override string Description => "Manage multiple save slots. Usage: save <action> <slot> [args]";
 
-    private static double CalculateSingleRankingScore(double accuracy, double difficulty)
-    {
-        if (accuracy < 70.0) return 0.0;
-        return Math.Pow((accuracy - 55.0) / 45.0, 2.0) * difficulty;
-    }
+    /// <summary>难度序号 → 显示名，下标与 <c>SongDifficultySet</c> 一致</summary>
+    private static readonly string[] DifficultyNames = { "EZ", "HD", "IN", "AT", "Legacy" };
 
-    public static double CalculateNextRKS(double currentRks)
-    {
-        if (currentRks < 0.0)
-            throw new ArgumentException("Only non-negative values supported.", nameof(currentRks));
+    /// <summary>曲名列的宽度</summary>
+    private const int SongNameWidth = 50;
 
-        long rounded = (long)Math.Round(Math.Ceiling(currentRks * 200.0), 0);
-        if (rounded % 2 == 0)
-            rounded++;
-        else if ((double)rounded / 200.0 <= currentRks + 1E-12)
-            rounded += 2;
+    /// <summary>
+    /// P3 凑不满 3 首满分成绩时的哨兵定数：没有"定数最低的那个 Phi"可以被顶掉，
+    /// 所以任何推分都不可能靠挤进 P3 来实现。
+    /// </summary>
+    private const double NoThirdPhi = 114514.0;
 
-        return (double)rounded / 200.0;
-    }
-
-    public static double InverseAccuracy(double singleRks, float difficulty)
-    {
-        return 55.0 + 45.0 * Math.Sqrt(singleRks / (double)difficulty);
-    }
-
-    public static double? CalculateRKS(double accuracy, float difficulty, float currentRks,
-        double p3Difficulty, double b27Rks)
-    {
-        double nextRks = CalculateNextRKS(currentRks) - (double)currentRks;
-        double targetAcc = InverseAccuracy(
-            Math.Max(CalculateSingleRankingScore(accuracy, difficulty), b27Rks) + 30.0 * nextRks,
-            difficulty);
-
-        if (targetAcc > 100.0)
-        {
-            double singleRksIncrease = CalculateSingleRankingScore(targetAcc, difficulty) -
-                                       CalculateSingleRankingScore(accuracy, difficulty);
-            double difficultyGap = (double)difficulty - p3Difficulty;
-
-            if (difficultyGap <= 0.0) return null;
-            if ((singleRksIncrease + difficultyGap) / 30.0 >= nextRks) return 100.0;
-            return null;
-        }
-
-        return targetAcc;
-    }
+    // ── 入口 ──
 
     public override bool Execute(string command, List<ShellArgument> args)
     {
@@ -76,59 +43,49 @@ internal class SaveCommand : CommandBase
             return true;
         }
 
-        string action = args[0].Value.ToLower();
-        if (!int.TryParse(args[1].Value, out int slotIndex) || slotIndex < 0)
-        {
-            ConsoleUtils.WriteWarning("Invalid slot index.");
-            return true;
-        }
+        var session = Shell.CurrentSession!;
+        string action = args[0].Value.ToLowerInvariant();
 
-        var session = Shell.CurrentSession;
-        if (session == null || slotIndex >= session.SaveFiles.Count)
+        if (!int.TryParse(args[1].Value, out int slotIndex) ||
+            slotIndex < 0 || slotIndex >= session.SaveFiles.Count)
         {
-            ConsoleUtils.WriteWarning($"No save file found in slot {slotIndex}.");
+            ConsoleUtils.WriteWarning($"No save file found in slot {args[1].Value}.");
             return true;
         }
 
         var slot = session.SaveFiles[slotIndex];
-        var playerInfo = session.PlayerInfo!;
 
         switch (action)
         {
             case "fetch":
-                return HandleFetch(slot, slotIndex);
-
+                return FetchSlot(slot, slotIndex);
             case "export":
                 if (args.Count < 3)
                 {
                     ConsoleUtils.WriteWarning("Usage: save export <slot> <path>");
                     return true;
                 }
-                return HandleExport(slot, args[2].Value);
-
+                return ExportSlot(slot, args[2].Value);
             case "check":
-                return HandleCheck(slot);
-
+                return CheckSlot(slot);
             case "p3b27":
             case "phibest":
-                return HandleP3B27(slot, args);
-
+                return ShowP3B27(slot, args);
             case "upload":
-                return HandleUpload(slot, playerInfo);
-
+                return UploadSlot(session, slot);
             case "syncsummary":
-                return HandleSyncSummary(slot);
-
+                return SyncSummary(slot);
             case "delete":
-                return HandleDelete(slot, playerInfo);
-
+                return DeleteSlot(session, slot, slotIndex);
             default:
                 ConsoleUtils.WriteWarning("Unknown action: " + action);
                 return true;
         }
     }
 
-    private bool HandleFetch(Mapping.ShellSaveSlot slot, int slotIndex)
+    // ── fetch / export ──
+
+    private static bool FetchSlot(ShellSaveSlot slot, int slotIndex)
     {
         if (slot.Info == null)
         {
@@ -138,7 +95,7 @@ internal class SaveCommand : CommandBase
 
         try
         {
-            slot.FetchAsync(Program.DifficultyProvider).GetAwaiter().GetResult();
+            slot.FetchAsync().GetAwaiter().GetResult();
             ConsoleUtils.WriteSuccess($"Save file fetched for slot {slotIndex}.");
         }
         catch (Exception ex)
@@ -149,17 +106,13 @@ internal class SaveCommand : CommandBase
         return true;
     }
 
-    private bool HandleExport(Mapping.ShellSaveSlot slot, string exportPath)
+    private static bool ExportSlot(ShellSaveSlot slot, string exportPath)
     {
-        if (slot.File == null)
-        {
-            ConsoleUtils.WriteWarning("Save file not fetched. Use 'save fetch' first.");
-            return true;
-        }
+        if (!RequiresFetched(slot)) return true;
 
         try
         {
-            slot.File.Save(exportPath);
+            File.WriteAllBytes(exportPath, slot.File!.ToZipBytes());
             ConsoleUtils.WriteSuccess("Save file exported to: " + exportPath);
         }
         catch (Exception ex)
@@ -170,175 +123,190 @@ internal class SaveCommand : CommandBase
         return true;
     }
 
-    private bool HandleCheck(Mapping.ShellSaveSlot slot)
-    {
-        if (slot.File == null)
-        {
-            ConsoleUtils.WriteWarning("Save file not fetched. Use 'save fetch' first.");
-            return true;
-        }
+    // ── check ──
 
-        var provider = Program.DifficultyProvider;
-        if (provider == null)
-        {
-            FluentConsole.DarkYellow.Line(Program.Localization["WarnDifficultyTSVNotLoaded"]);
-            FluentConsole.Gray.Line(Program.Localization["WarnDifficultyTSVNoErrorDetect"]);
-        }
+    private static bool CheckSlot(ShellSaveSlot slot)
+    {
+        if (!RequiresFetched(slot)) return true;
+
         if (Program.InfoTSV == null)
             FluentConsole.DarkYellow.Line(Program.Localization["WarnInfoTSVNotLoaded"]);
 
-        var issues = slot.File.CheckSaveData(slot.Info?.Summary);
+        var issues = SaveChecker.Check(slot.File!, slot.Info?.CloudSummary, Program.DifficultyProvider);
+
         if (issues.Count == 0)
         {
             ConsoleUtils.WriteSuccess("No problems detected in save file.");
+            return true;
         }
-        else
+
+        ConsoleUtils.WriteWarning($"{issues.Count} issue(s) detected:");
+        foreach (var issue in issues)
         {
-            ConsoleUtils.WriteWarning($"{issues.Count} issue(s) detected:");
-            foreach (var issue in issues)
-            {
-                var color = issue.Severity == IssueSeverity.Warning
-                    ? ConsoleColor.Yellow : ConsoleColor.Gray;
-                FluentConsole.Color(color).Line($"  [{issue.Type}] {issue.Message}");
-            }
+            FluentConsole.Color(SeverityColor(issue.Severity))
+                .Line("  " + Program.Localization[issue.LocalizationKey, issue.Arguments]);
         }
 
         return true;
     }
 
-    private bool HandleP3B27(Mapping.ShellSaveSlot slot, List<ShellArgument> args)
-    {
-        if (slot.File == null)
-        {
-            ConsoleUtils.WriteWarning("Save file not fetched. Use 'save fetch' first.");
-            return true;
-        }
+    // ── p3b27 ──
 
-        // 如果 TSV 已加载但记录中还没有定数，刷新一下
-        if (Program.DifficultyTSV != null && slot.File?.GameRecord != null)
+    private static bool ShowP3B27(ShellSaveSlot slot, List<ShellArgument> args)
+    {
+        if (!RequiresFetched(slot)) return true;
+
+        var record = slot.File!.GameRecord;
+        var provider = Program.DifficultyProvider;
+
+        if (record.Records.Count == 0)
         {
-            slot.File.GameRecord.RefreshDifficulties(Program.DifficultyTSV);
+            ConsoleUtils.WriteWarning("No game record found. Check if your save file is valid.");
+            return true;
         }
 
         int count = 27;
         if (args.Count > 2 && int.TryParse(args[2].Value, out int customCount) && customCount > 0)
             count = customCount;
 
-        var records = slot.File.GameRecord.Records;
         bool hasInfoTSV = Program.InfoTSV != null;
-
         if (!hasInfoTSV)
             ConsoleUtils.WriteWarning("Couldn't find info.tsv. Use 'config info.info.tsv <path>' to specify.");
 
-        if (records == null || records.Count == 0)
-        {
-            ConsoleUtils.WriteWarning("No game record found. Check if your save file is valid.");
-            return true;
-        }
+        var views = ProjectRecords(record, provider);
 
-        float currentRks = slot.File.GameRecord.RankingScore ?? 0f;
+        float currentRks = provider != null ? record.CalculateRankingScore(provider) : 0f;
         FluentConsole.Cyan.Text("Ranking Score : ").White.Line(currentRks.ToString("F6"));
 
-        // P3 analysis (top 3 phi scores by difficulty)
-        var phiRecords = records.SelectMany(kvp =>
-            kvp.Value.GetDictionary().Where(skvp => skvp.Value != null)
-                .Select(skvp => new
-                {
-                    DisplayName = "[" + skvp.Key + "] " +
-                        (hasInfoTSV ? (Program.InfoTSV?.GetSongName(kvp.Key) ?? kvp.Key) : kvp.Key),
-                    Record = skvp.Value,
-                    SongId = kvp.Key
-                }))
-            .Where(x => x.Record?.Score == 1000000 && x.Record?.Acc == 100f)
-            .OrderByDescending(x => x.Record?.Difficulty ?? 0f)
+        // ── P3：定数最高的 3 个满分成绩 ──
+        var phiRecords = views
+            .Where(v => v.Record.Score == 1000000 && v.Record.Acc == 100f)
+            .OrderByDescending(v => v.Difficulty)
             .Take(3)
             .ToList();
 
-        double p3Difficulty = phiRecords.Count >= 3
-            ? (phiRecords[2].Record?.Difficulty ?? 114514f)
-            : 114514f;
+        double p3Difficulty = phiRecords.Count >= 3 ? phiRecords[2].Difficulty : NoThirdPhi;
 
         for (int i = 0; i < phiRecords.Count; i++)
         {
-            var entry = phiRecords[i];
-            var record = entry.Record!;
-            FluentConsole.Gray.Text($"P{i + 1,-4}")
-                .Cyan.Text((record.RankingScore?.ToString("F3") ?? "?").PadLeft(6))
-                .Gray.Text(" | ")
-                .Yellow.Text(entry.DisplayName.PadRightEx(50))
-                .Gray.Text(" Lv." + (record.Difficulty?.ToString("F1") ?? "?").PadLeft(4) + " | ")
-                .Yellow.Line($"{record.Score.ToString().PadLeft(7, '0')} {record.Rank.ToString().PadRightEx(3)} {record.Acc,6:F2}%");
+            var view = phiRecords[i];
+            WriteRecordLine($"P{i + 1,-4}", view, view.RankingScore,
+                Describe(view, hasInfoTSV), suffix: null, suffixColor: default);
         }
 
-        // B27 analysis — 按 RankingScore 排序
-        var b27Entries = records.SelectMany(kvp =>
-            kvp.Value.GetDictionary().Where(skvp => skvp.Value != null && skvp.Value.RankingScore.HasValue)
-                .Select(skvp => new
-                {
-                    DisplayName = "[" + skvp.Key + "] " +
-                        (hasInfoTSV ? (Program.InfoTSV?.GetSongName(kvp.Key) ?? kvp.Key) : kvp.Key),
-                    Record = skvp.Value!,
-                    SongId = kvp.Key
-                }))
-            .OrderByDescending(x => x.Record!.RankingScore)
+        // ── B27：单曲 RKS 最高的 27 首 ──
+        var b27Entries = views
+            .Where(v => v.Difficulty > 0f)
+            .OrderByDescending(v => v.RankingScore)
             .Take(count)
             .ToList();
 
-        if (b27Entries.Count < 27)
-        {
-            ConsoleUtils.WriteWarning($"Only {b27Entries.Count} records found (need {count}). Please load difficulty.tsv first.");
-            return true;
-        }
-
-        double b27Rks = b27Entries[26].Record!.RankingScore ?? 114514f;
+        double b27Rks = b27Entries[^1].RankingScore;
 
         for (int i = 0; i < b27Entries.Count; i++)
         {
-            var entry = b27Entries[i];
-            var record = entry.Record!;
-            var rank = record.Rank;
+            var view = b27Entries[i];
+            var suggestion = RankingScoreAdvisor.AccuracyForNextRankingScore(
+                view.Record.Acc, view.Difficulty, currentRks, p3Difficulty, b27Rks);
 
-            var suggestion = CalculateRKS(record.Acc, record.Difficulty ?? 0.1f,
-                currentRks, p3Difficulty, b27Rks);
-
-            string suggestionText = suggestion.HasValue
-                ? $"{suggestion:F3}%"
-                : Program.Localization["P3B27NoSuggestion"];
-
-            FluentConsole.Gray.Text($"#{i + 1,-4}")
-                .Cyan.Text((record.RankingScore?.ToString("F3") ?? "?").PadLeft(6))
-                .Gray.Text(" | ")
-                .Yellow.Text(entry.DisplayName.PadRightEx(50))
-                .Gray.Text(" Lv." + (record.Difficulty?.ToString("F1") ?? "?").PadLeft(4) + " | ")
-                .Color(rank switch
-                {
-                    PhiLevelType.F => ConsoleColor.Gray,
-                    PhiLevelType.FC => ConsoleColor.Cyan,
-                    PhiLevelType.Phi => ConsoleColor.Yellow,
-                    _ => ConsoleColor.White
-                })
-                .Text($"{record.Score.ToString().PadLeft(7, '0')} {rank.ToString().PadRightEx(3)} {record.Acc,6:F2}%")
-                .Color(suggestion.HasValue ? ConsoleColor.Green : ConsoleColor.DarkGray)
-                .Line("  => " + suggestionText);
+            WriteRecordLine($"#{i + 1,-4}", view, view.RankingScore, Describe(view, hasInfoTSV),
+                suffix: suggestion.HasValue ? $"{suggestion:F3}%" : Program.Localization["P3B27NoSuggestion"],
+                suffixColor: suggestion.HasValue ? ConsoleColor.Green : ConsoleColor.DarkGray);
         }
 
         return true;
     }
 
-    private bool HandleUpload(Mapping.ShellSaveSlot slot, PhigrosPlayerInfo playerInfo)
+    /// <summary>把成绩表摊平成"每条成绩一行"的视图，P3 与 B27 共用</summary>
+    private static List<RecordView> ProjectRecords(PhigrosRecord record, IDifficultyProvider? provider)
     {
-        if (slot.File == null)
+        var views = new List<RecordView>();
+
+        foreach (var (songId, levels) in record.Records)
         {
-            ConsoleUtils.WriteWarning("Save file not fetched. Use 'save fetch' first.");
+            for (int index = 0; index < DifficultyNames.Length; index++)
+            {
+                var level = levels[index];
+                if (level == null) continue;
+
+                views.Add(new RecordView(songId, DifficultyNames[index], level,
+                    provider?.GetDifficulty(songId, index) ?? 0f));
+            }
+        }
+
+        return views;
+    }
+
+    private static void WriteRecordLine(string prefix, RecordView view, double rankingScore,
+                                        string displayName, string? suffix, ConsoleColor suffixColor)
+    {
+        FluentConsole.Gray.Text(prefix)
+            .Cyan.Text(rankingScore.ToString("F3").PadLeft(6))
+            .Gray.Text(" | ")
+            .Yellow.Text(displayName.PadRightEx(SongNameWidth))
+            .Gray.Text($" Lv.{view.Difficulty,4:F1} | ")
+            .Color(RankColor(view.Record.Rank))
+            .Text($"{view.Record.Score:D7} {view.Record.Rank.ToString().PadRightEx(3)} {view.Record.Acc,6:F2}%")
+            .Color(suffixColor)
+            .Line(suffix == null ? "" : "  => " + suffix);
+    }
+
+    /// <summary>
+    /// 曲目显示名：优先 info.tsv 里的曲名，查不到则回退到曲目 ID。
+    /// <para>
+    /// 回退时**保留原始 ID**（含 <c>.0</c> 后缀）——它与存档目录里的键一致，
+    /// 方便用户直接拿它去 <c>cd</c>。
+    /// </para>
+    /// </summary>
+    private static string Describe(RecordView view, bool hasInfoTSV)
+    {
+        string? songName = hasInfoTSV ? Program.InfoTSV?.GetSongName(view.SongId) : null;
+        return $"[{view.DifficultyName}] {songName ?? view.SongId}";
+    }
+
+    // ── upload / syncsummary / delete ──
+
+    /// <summary>
+    /// 上传 = **替换**：先新建一个云槽位，成功后再删掉原来的那一个。
+    /// </summary>
+    private static bool UploadSlot(ShellSession session, ShellSaveSlot slot)
+    {
+        if (!RequiresFetched(slot)) return true;
+        if (!RequireDifficultyProvider()) return true;
+
+        var old = slot.Info;
+        if (old == null)
+        {
+            ConsoleUtils.WriteWarning("Slot info is null.");
             return true;
         }
 
+        var player = session.PlayerInfo!;
+        var save = slot.File!;
+
         try
         {
-            byte[] zipData = slot.File.PackToZip();
-            playerInfo.UploadSaveAsync(zipData, slot.Info, output: true)
+            var created = player.UploadSave(save, save.GenerateSummary(Program.DifficultyProvider!))
                 .GetAwaiter().GetResult();
+
+            // 先新建、后删旧——反过来一旦新建失败就把云端的存档白删了。
+            // 旧槽位删不掉只提示、不中断：新存档已经好好地在云端了，最坏是多留一个旧槽位。
+            string? cleanupWarning = null;
+            try
+            {
+                player.DeleteSave(old).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                cleanupWarning = Program.Localization["WarnUploadOldSlotNotDeleted", new object[] { ex.Message }];
+            }
+
             ConsoleUtils.WriteSuccess("Save file uploaded successfully!");
+            if (cleanupWarning != null)
+                ConsoleUtils.WriteWarning(cleanupWarning);
+
+            // 刚下载的数据跟着新槽位走，省得用户再 fetch 一次
+            ReloadSlots(session, (created.SaveInfoObjectID, save));
         }
         catch (Exception ex)
         {
@@ -348,21 +316,20 @@ internal class SaveCommand : CommandBase
         return true;
     }
 
-    private bool HandleSyncSummary(Mapping.ShellSaveSlot slot)
+    private static bool SyncSummary(ShellSaveSlot slot)
     {
+        if (!RequiresFetched(slot)) return true;
+        if (!RequireDifficultyProvider()) return true;
+
         try
         {
-            slot.SyncSaveToSummary();
+            var summary = slot.RebuildSummary(Program.DifficultyProvider!);
+            var save = slot.File!;
+
             ConsoleUtils.WriteSuccess("Save file synced to summary.");
-            if (slot.File != null)
-            {
-                FluentConsole.DarkCyan.Text("Ranking Score : ").White.Line(
-                    slot.File.GameRecord.RankingScore?.ToString("F6") ?? "Unknown")
-                    .DarkCyan.Text("Challenge     : ").White.Line(
-                        slot.File.GameProgress?.ChallengeModeRank.ToString() ?? "Unknown")
-                    .DarkCyan.Text("Avatar        : ").White.Line(
-                        slot.File.User?.Avatar ?? "Unknown");
-            }
+            FluentConsole.DarkCyan.Text("Ranking Score : ").White.Line(summary.RankingScore.ToString("F6"))
+                .DarkCyan.Text("Challenge     : ").White.Line(save.GameProgress.ChallengeModeRank.ToString())
+                .DarkCyan.Text("Avatar        : ").White.Line(save.User.Avatar);
         }
         catch (Exception ex)
         {
@@ -372,11 +339,11 @@ internal class SaveCommand : CommandBase
         return true;
     }
 
-    private bool HandleDelete(Mapping.ShellSaveSlot slot, PhigrosPlayerInfo playerInfo)
+    private static bool DeleteSlot(ShellSession session, ShellSaveSlot slot, int slotIndex)
     {
-        if (slot.Info?.CloudInfo == null)
+        if (slot.Info == null)
         {
-            ConsoleUtils.WriteWarning("No cloud info available for this slot.");
+            ConsoleUtils.WriteWarning("Slot info is null.");
             return true;
         }
 
@@ -391,9 +358,12 @@ internal class SaveCommand : CommandBase
 
         try
         {
-            playerInfo.DeleteSaveAsync(slot.Info.CloudInfo.FileObjectID)
-                .GetAwaiter().GetResult();
+            session.PlayerInfo!.DeleteSave(slot.Info).GetAwaiter().GetResult();
             ConsoleUtils.WriteSuccess("Save file deleted from cloud.");
+
+            // 人还站在被删掉的槽位里的话，先退回根目录
+            ResetPathIfInsideSlot(slotIndex);
+            ReloadSlots(session);
         }
         catch (Exception ex)
         {
@@ -403,5 +373,72 @@ internal class SaveCommand : CommandBase
         return true;
     }
 
+    // ── 共用 ──
 
+    /// <summary>
+    /// 重新拉取槽位列表并重建 VFS 根（槽位增删后必须做，否则 VFS 里挂的还是旧的 ShellSaveSlot）。
+    /// <paramref name="keep"/> 用于把刚下载好的存档数据带到新列表里的同一个槽位上。
+    /// </summary>
+    private static void ReloadSlots(ShellSession session, (string ObjectId, SavePackage File)? keep = null)
+    {
+        session.ReloadSaveFilesAsync().GetAwaiter().GetResult();
+        Shell.RebuildPlayerRoot();
+
+        if (!keep.HasValue) return;
+
+        var (objectId, file) = keep.Value;
+        var slot = session.SaveFiles.FirstOrDefault(s => s.Info?.SaveInfoObjectID == objectId);
+        if (slot != null) slot.File = file;
+    }
+
+    private static void ResetPathIfInsideSlot(int slotIndex)
+    {
+        string prefix = $"/SaveFiles/{slotIndex}";
+        if (Shell.Path == prefix || Shell.Path.StartsWith(prefix + "/", StringComparison.Ordinal))
+            Shell.Path = "/";
+    }
+
+    private static bool RequiresFetched(ShellSaveSlot slot)
+    {
+        if (slot.File != null) return true;
+
+        ConsoleUtils.WriteWarning("Save file not fetched. Use 'save fetch' first.");
+        return false;
+    }
+
+    /// <summary>
+    /// 摘要里的 RKS 只有配上定数才算得准；没有定数时无参重载会写入占位分数，
+    /// 一旦上传就是脏数据，所以宁可不做。
+    /// </summary>
+    private static bool RequireDifficultyProvider()
+    {
+        var provider = Program.DifficultyProvider;
+        if (provider != null && provider.IsLoaded) return true;
+
+        ConsoleUtils.WriteWarning(Program.Localization["WarnRksRequiresDifficultyTSV"]);
+        return false;
+    }
+
+    private static ConsoleColor RankColor(RankType rank) => rank switch
+    {
+        RankType.F => ConsoleColor.Gray,
+        RankType.FC => ConsoleColor.Cyan,
+        RankType.Phi => ConsoleColor.Yellow,
+        _ => ConsoleColor.White,
+    };
+
+    private static ConsoleColor SeverityColor(IssueSeverity severity) => severity switch
+    {
+        IssueSeverity.Warning => ConsoleColor.Yellow,
+        IssueSeverity.Error => ConsoleColor.Red,
+        _ => ConsoleColor.Gray,
+    };
+
+    /// <summary>一条成绩的展示视图：曲目、难度、成绩本身、以及查表得到的定数（查不到为 0）</summary>
+    private readonly record struct RecordView(string SongId, string DifficultyName,
+                                              LevelRecord Record, float Difficulty)
+    {
+        /// <summary>单曲 RKS = 成绩系数 × 定数</summary>
+        public double RankingScore => Record.GetRankingScore(Difficulty);
+    }
 }

@@ -1,4 +1,5 @@
-using PhigrosArchive;
+using CreeperMPG.PhiKits.Save.CloudStorage;
+using CreeperMPG.PhiKits.Save.Taptap;
 using PhigrosShell.Mapping;
 using PhigrosShell.Utils;
 
@@ -21,113 +22,144 @@ internal class LoginCommand : CommandBase
             return true;
         }
 
+        string? token = ConsoleUtils.GetArgumentValue(args, "token");
+        bool wantsQrCode = ConsoleUtils.GetArgumentValue(args, "qrcode") != null ||
+                           ConsoleUtils.GetArgumentValue(args, "qr") != null;
+
+        if (args.Count > 0 && token != null)
+            return LoginWithToken(token);
+
+        if (wantsQrCode)
+            return LoginWithQrCode();
+
+        FluentConsole.Yellow.Line("Usage: " + command + " -token=<token>|-qr/-qrcode");
+        return true;
+    }
+
+    // ── Token 登录 ──
+
+    private static bool LoginWithToken(string token)
+    {
+        if (token.Length != 25)
+        {
+            FluentConsole.Yellow.Line(
+                $"The token length is invalid (expect 25, actual {token.Length}). Check the token and try again.");
+            return true;
+        }
+
         Console.Write(Program.Localization["LoggingIn"]);
         LoadUtils.StartLoading();
 
-        ShellSession? session = null;
-        string? token = ConsoleUtils.GetArgumentValue(args, "token");
-
-        if (args.Count > 0 && token != null)
+        PlayerObject? player = null;
+        try
         {
-            // Token login
-            if (token.Length != 25)
-            {
-                FluentConsole.Yellow.Line($"The token length is invalid (expect 25, actual {token.Length}). Check the token and try again.");
-                return true;
-            }
+            player = PlayerObject.FetchAsync(token).GetAwaiter().GetResult();
+        }
+        catch { }
 
+        return FinishLogin(player);
+    }
+
+    // ── 二维码登录 ──
+
+    private static bool LoginWithQrCode()
+    {
+        var cancellation = new CancellationTokenSource();
+        StartCancelKeyListener(cancellation);
+
+        PlayerObject? player = null;
+        try
+        {
+            player = new TaptapClient().LoginAsync(
+                onQrCodeReady: qr =>
+                {
+                    ShowQrCode(qr);
+                    return Task.CompletedTask;
+                },
+                progress: new QrStatusReporter(),
+                cancellationToken: cancellation.Token).GetAwaiter().GetResult();
+
+            Console.Write(Program.Localization["LoggingIn"]);
+            LoadUtils.StartLoading();
+        }
+        catch (OperationCanceledException)
+        {
+            FluentConsole.Yellow.Line(Program.Localization["OperationCancelledByUser"]);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            LoadUtils.LoadingError();
+            FluentConsole.Yellow.Line("Error: " + ex.Message);
+            return true;
+        }
+        finally
+        {
+            // 让监听线程退出。这里刻意不 Dispose：线程可能还在读它的状态，
+            // Dispose 会让它撞上 ObjectDisposedException。
+            cancellation.Cancel();
+        }
+
+        return FinishLogin(player);
+    }
+
+    /// <summary>
+    /// 起一个后台线程监听按键，按 Q 就取消登录。
+    /// <para>
+    /// <c>LoginAsync</c> 把控制台主线程一路 await 到底，主线程腾不出手抓键，只能另开线程。
+    /// 取消会让 <c>LoginAsync</c> 抛 <c>OperationCanceledException</c>。
+    /// </para>
+    /// </summary>
+    private static void StartCancelKeyListener(CancellationTokenSource cancellation)
+    {
+        var listener = new Thread(() =>
+        {
             try
             {
-                session = ShellSession.LoginAsync(token).GetAwaiter().GetResult();
-            }
-            catch { }
-        }
-        else if (ConsoleUtils.GetArgumentValue(args, "qrcode") != null ||
-                 ConsoleUtils.GetArgumentValue(args, "qr") != null)
-        {
-            // QR Code login
-            LoadUtils.StopLoading(loadStopWriteLine: false);
+                while (!cancellation.IsCancellationRequested)
+                {
+                    if (!Console.KeyAvailable)
+                    {
+                        Thread.Sleep(50);
+                        continue;
+                    }
 
-            var qrResponse = Taptap.GetLoginQRCode().GetAwaiter().GetResult();
-            if (qrResponse == null)
+                    if (Console.ReadKey(intercept: true).KeyChar is 'q' or 'Q')
+                    {
+                        cancellation.Cancel();
+                        return;
+                    }
+                }
+            }
+            catch (InvalidOperationException)
             {
-                FluentConsole.Yellow.Line("Couldn't get the QR code. Check the Internet, then try again.");
-                return true;
+                // 输入被重定向（没有真正的控制台）时抓不到键，放弃监听即可
             }
-
-            FluentConsole.Cyan.Line(Program.Localization["LoginQRCodeScanPrompt"]);
-            QRUtils.OutputToConsole(qrResponse.Value.qrcode_url);
-            FluentConsole.Green.Line(Program.Localization["LoginLinkPrompt", new object[] { qrResponse.Value.qrcode_url }]);
-            FluentConsole.Yellow.Line(Program.Localization["LoginQRExpirePrompt", new object[] { qrResponse.Value.expires_in }]);
-            FluentConsole.NewLine();
-            FluentConsole.Magenta.Line(Program.Localization["CancelWithPressing", new object[] { "Q" }]);
-            FluentConsole.DarkYellow.Line(Program.Localization["LoginQRWaiting"]);
-
-            var previousStatus = QRCodeStatus.AuthorizationPending;
-
-            while (true)
-            {
-                if (Console.KeyAvailable)
-                {
-                    char keyChar = Console.ReadKey(intercept: true).KeyChar;
-                    if (keyChar == 'q' || keyChar == 'Q')
-                    {
-                        FluentConsole.Yellow.Line(Program.Localization["OperationCancelledByUser"]);
-                        return true;
-                    }
-                }
-
-                Thread.Sleep(qrResponse.Value.interval * 1000);
-                var pollResult = Taptap.PollQRCode(qrResponse.Value.device_code).GetAwaiter().GetResult();
-                var status = pollResult.Key;
-                var qrResult = pollResult.Value;
-
-                if (status == QRCodeStatus.Success && qrResult.HasValue)
-                {
-                    var userProfile = Taptap.FetchUserProfile(qrResult.Value);
-                    if (userProfile == null)
-                    {
-                        FluentConsole.Yellow.Line(Program.Localization["LoginQRUserProfileGetFailed"]);
-                        return true;
-                    }
-
-                    var phiPlayerDoc = Taptap.GetPhiPlayerInfoByTaptap(qrResult.Value, userProfile.Value)
-                        .GetAwaiter().GetResult();
-                    var playerInfo = PhigrosPlayerInfo.FromJson(phiPlayerDoc.RootElement, phiPlayerDoc.RootElement
-                        .GetProperty("sessionToken").GetString() ?? "");
-                    token = playerInfo.SessionToken;
-
-                    Console.Write(Program.Localization["LoggingIn"]);
-                    LoadUtils.StartLoading();
-
-                    session = ShellSession.CreateFromQRAsync(playerInfo, token).GetAwaiter().GetResult();
-                    break;
-                }
-
-                if (status != previousStatus)
-                {
-                    previousStatus = status;
-                    switch (status)
-                    {
-                        case QRCodeStatus.Error:
-                            FluentConsole.Yellow.Line(Program.Localization["LoginQRErrorWhenPolling"]);
-                            return true;
-                        case QRCodeStatus.AuthorizationWaiting:
-                            FluentConsole.Green.Line(Program.Localization["LoginQRAuthorizationWaiting"]);
-                            break;
-                        case QRCodeStatus.InvalidGrantCode:
-                            FluentConsole.Green.Line(Program.Localization["LoginQRInvalidGrantCode"]);
-                            break;
-                    }
-                }
-            }
-        }
-        else
+        })
         {
-            FluentConsole.Yellow.Line("Usage: " + command + " -token=<token>|-qr/-qrcode");
-        }
+            IsBackground = true,
+            Name = "PhiShell.QrLoginCancel"
+        };
 
-        if (session == null)
+        listener.Start();
+    }
+
+    private static void ShowQrCode(QrCodeResponse qr)
+    {
+        FluentConsole.Cyan.Line(Program.Localization["LoginQRCodeScanPrompt"]);
+        QRUtils.OutputToConsole(qr.QrCodeUrl);
+        FluentConsole.Green.Line(Program.Localization["LoginLinkPrompt", new object[] { qr.QrCodeUrl }]);
+        FluentConsole.Yellow.Line(Program.Localization["LoginQRExpirePrompt", new object[] { qr.ExpiresIn }]);
+        FluentConsole.NewLine();
+        FluentConsole.Magenta.Line(Program.Localization["CancelWithPressing", new object[] { "Q" }]);
+        FluentConsole.DarkYellow.Line(Program.Localization["LoginQRWaiting"]);
+    }
+
+    // ── 收尾 ──
+
+    private static bool FinishLogin(PlayerObject? player)
+    {
+        if (player == null)
         {
             LoadUtils.LoadingError();
             FluentConsole.Yellow.Line(Program.Localization["LoginPlayerGetFailed"]);
@@ -136,42 +168,72 @@ internal class LoginCommand : CommandBase
 
         try
         {
+            var session = ShellSession.CreateAsync(player).GetAwaiter().GetResult();
             Shell.LoginSession(session);
             LoadUtils.LoadingDone();
-
-            var playerInfo = session.PlayerInfo!;
-            FluentConsole.Cyan.Line(Program.Localization["LoginSuccessfully"])
-                .DarkCyan.Text(Program.Localization["UserInfoNameTag"].PadRightEx(17))
-                .White.Line(playerInfo.Nickname)
-                .DarkCyan.Text(Program.Localization["UserInfoIDTag"].PadRightEx(17))
-                .White.Line(playerInfo.ShortID)
-                .DarkCyan.Text(Program.Localization["UserInfoObjectIDTag"].PadRightEx(17))
-                .White.Line(playerInfo.UserObjectID)
-                .DarkCyan.Text(Program.Localization["UserInfoSessionTokenTag"].PadRightEx(17))
-                .White.Line(playerInfo.SessionToken)
-                .DarkCyan.Text(Program.Localization["UserInfoCreateTimeTag"].PadRightEx(17))
-                .White.Line(playerInfo.CreateTime);
-
-            if (session.SaveFiles.Count > 0 && session.SaveFiles[0].Info != null)
-            {
-                var summary = session.SaveFiles[0].Info.Summary;
-                FluentConsole.DarkCyan.Text(Program.Localization["UserInfoUpdateTimeTag"].PadRightEx(17))
-                    .White.Line(session.SaveFiles[0].Info.CloudInfo?.SaveUpdateTime ?? "[?]")
-                    .Cyan.Line(Program.Localization["LoginSummaryTitle"])
-                    .DarkCyan.Text(Program.Localization["UserSummaryRankingScoreTag"].PadRightEx(17))
-                    .White.Line(summary.RankingScore)
-                    .DarkCyan.Text(Program.Localization["UserSummaryAvatarTag"].PadRightEx(17))
-                    .White.Line(summary.Avatar ?? "[?]")
-                    .DarkCyan.Text(Program.Localization["UserSummaryChallengeRankTag"].PadRightEx(17))
-                    .White.Line(summary.Challenge);
-            }
+            ShowLoginSummary(session);
         }
         catch (Exception ex)
         {
             LoadUtils.LoadingError();
-            FluentConsole.Yellow.Line("Error: " + ex.Message + ". Check the token and the Internet, then try again.");
+            FluentConsole.Yellow.Line(
+                "Error: " + ex.Message + ". Check the token and the Internet, then try again.");
         }
 
         return true;
+    }
+
+    private static void ShowLoginSummary(ShellSession session)
+    {
+        var player = session.PlayerInfo!;
+        FluentConsole.Cyan.Line(Program.Localization["LoginSuccessfully"])
+            .DarkCyan.Text(Program.Localization["UserInfoNameTag"].PadRightEx(17))
+            .White.Line(player.Nickname)
+            .DarkCyan.Text(Program.Localization["UserInfoIDTag"].PadRightEx(17))
+            .White.Line(player.ShortID)
+            .DarkCyan.Text(Program.Localization["UserInfoObjectIDTag"].PadRightEx(17))
+            .White.Line(player.UserObjectID)
+            .DarkCyan.Text(Program.Localization["UserInfoSessionTokenTag"].PadRightEx(17))
+            .White.Line(player.SessionToken)
+            .DarkCyan.Text(Program.Localization["UserInfoCreateTimeTag"].PadRightEx(17))
+            .White.Line(player.CreateTime);
+
+        // 摘要解析失败的槽位 CloudSummary 为 null，那就没什么可显示的
+        var firstSlot = session.SaveFiles.FirstOrDefault(s => s.Info != null);
+        if (firstSlot?.Info?.CloudSummary is not { } summary) return;
+
+        FluentConsole.DarkCyan.Text(Program.Localization["UserInfoUpdateTimeTag"].PadRightEx(17))
+            .White.Line(firstSlot.Info.SaveUpdateTime)
+            .Cyan.Line(Program.Localization["LoginSummaryTitle"])
+            .DarkCyan.Text(Program.Localization["UserSummaryRankingScoreTag"].PadRightEx(17))
+            .White.Line(summary.RankingScore)
+            .DarkCyan.Text(Program.Localization["UserSummaryAvatarTag"].PadRightEx(17))
+            .White.Line(summary.Avatar)
+            .DarkCyan.Text(Program.Localization["UserSummaryChallengeRankTag"].PadRightEx(17))
+            .White.Line(summary.Challenge);
+    }
+
+    /// <summary>
+    /// 轮询状态每秒来一次，只在**变化时**打印——否则会把屏幕刷满。
+    /// </summary>
+    private sealed class QrStatusReporter : IProgress<QrCodeStatus>
+    {
+        private QrCodeStatus? _lastReported;
+
+        public void Report(QrCodeStatus status)
+        {
+            if (_lastReported == status) return;
+            _lastReported = status;
+
+            switch (status)
+            {
+                case QrCodeStatus.AuthorizationWaiting:
+                    FluentConsole.Green.Line(Program.Localization["LoginQRAuthorizationWaiting"]);
+                    break;
+                case QrCodeStatus.InvalidGrantCode:
+                    FluentConsole.Green.Line(Program.Localization["LoginQRInvalidGrantCode"]);
+                    break;
+            }
+        }
     }
 }

@@ -1,6 +1,5 @@
 using System.Text.RegularExpressions;
 using System.Text;
-using PhigrosArchive.Utils;
 using PhigrosShell.Mapping;
 using PhigrosShell.Utils;
 
@@ -31,10 +30,24 @@ internal static class Shell
     {
         CurrentSession = session;
         User = session.PlayerInfo?.ShortID ?? "";
+        RebuildPlayerRoot();
+        Path = "/";
+    }
 
-        // Build VDirectory root mappings
-        var root = new ShellPlayerRoot { PlayerInfo = session.PlayerInfo };
-        foreach (var slot in session.SaveFiles)
+    /// <summary>
+    /// 按当前会话的槽位列表重建 VDirectory 根。
+    /// 槽位增删或重排序之后必须调用，否则 VFS 里挂着的还是旧的 ShellSaveSlot。
+    /// </summary>
+    public static void RebuildPlayerRoot()
+    {
+        if (CurrentSession == null)
+        {
+            CurrentPlayerRoot = null;
+            return;
+        }
+
+        var root = new ShellPlayerRoot { PlayerInfo = CurrentSession.PlayerInfo };
+        foreach (var slot in CurrentSession.SaveFiles)
         {
             root.SaveFiles.Add(new ShellSlotRoot
             {
@@ -42,7 +55,6 @@ internal static class Shell
             });
         }
         CurrentPlayerRoot = root;
-        Path = "/";
     }
 
     public static void Logout()

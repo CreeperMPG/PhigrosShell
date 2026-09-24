@@ -17,10 +17,13 @@ internal class AboutCommand : CommandBase
         FluentConsole.White.Line($"\n{Program.AppName} {Program.Version}");
         FluentConsole.DarkCyan.Line($"\n{Program.Localization["UpdateLogHeader"]}");
 
-        foreach (var version in Program.UpdateLog)
+        // 版本顺序由 changelog 文件里的数组顺序决定（约定从新到旧）
+        foreach (var entry in Program.Changelog.Entries)
         {
-            FluentConsole.Cyan.Line($"\n{version.Key}");
-            foreach (var line in version.Value)
+            FluentConsole.Cyan.Line($"\n{entry.Version}  ")
+                .DarkGray.Text(entry.Date).NewLine();
+
+            foreach (var line in entry.Changes)
             {
                 FluentConsole.Gray.Text("  • ").White.Line(line);
             }

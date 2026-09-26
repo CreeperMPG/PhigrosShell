@@ -32,7 +32,7 @@ internal class Program
 
     public const string AppName = "PhiShell";
     public const bool IsBeta = false;
-    public const string Version = "1.3.0";
+    public const string Version = "1.3.1";
     public const bool IsDebug = false;
 
     public static void InitTSVFiles()

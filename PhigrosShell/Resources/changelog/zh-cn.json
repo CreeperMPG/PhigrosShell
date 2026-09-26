@@ -1,6 +1,15 @@
 {
   "entries": [
     {
+      "version": "1.3.1",
+      "date": "2026-09-26 19:52",
+      "changes": [
+        "更新 PhiKits.Save API，将版本支持扩大到 Phigros 3.9.0 ~ 4.0.0",
+        "修复了 print 命令无法打印完全的 Bug",
+        "优化本地化"
+      ]
+    },
+    {
       "version": "1.3.0",
       "date": "2026-09-24 00:02",
       "changes": [

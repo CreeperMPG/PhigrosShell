@@ -3,6 +3,7 @@ using CreeperMPG.PhiKits.Save.Data;
 using CreeperMPG.PhiKits.Save.Data.SaveEntries;
 using PhigrosShell.Check;
 using PhigrosShell.Mapping;
+using PhigrosShell.Services;
 using PhigrosShell.Utils;
 
 namespace PhigrosShell.Commands.Phigros;
@@ -11,6 +12,8 @@ internal class SaveCommand : CommandBase
 {
     public override string Name => "Save";
     public override string Description => "Manage multiple save slots. Usage: save <action> <slot> [args]";
+
+    private static LocalizationService L => Program.Localization;
 
     /// <summary>难度序号 → 显示名，下标与 <c>SongDifficultySet</c> 一致</summary>
     private static readonly string[] DifficultyNames = { "EZ", "HD", "IN", "AT", "Legacy" };
@@ -33,13 +36,13 @@ internal class SaveCommand : CommandBase
 
         if (!Shell.LoggedIn())
         {
-            ConsoleUtils.WriteWarning("Required login.");
+            ConsoleUtils.WriteWarning(L["SaveRequiredLogin"]);
             return true;
         }
 
         if (args.Count < 2)
         {
-            ConsoleUtils.WriteWarning("Usage: save <action> <slot> [args]");
+            ConsoleUtils.WriteWarning(L["SaveUsage"]);
             return true;
         }
 
@@ -49,7 +52,7 @@ internal class SaveCommand : CommandBase
         if (!int.TryParse(args[1].Value, out int slotIndex) ||
             slotIndex < 0 || slotIndex >= session.SaveFiles.Count)
         {
-            ConsoleUtils.WriteWarning($"No save file found in slot {args[1].Value}.");
+            ConsoleUtils.WriteWarning(L["SaveNoSlot", new object[] { args[1].Value }]);
             return true;
         }
 
@@ -62,7 +65,7 @@ internal class SaveCommand : CommandBase
             case "export":
                 if (args.Count < 3)
                 {
-                    ConsoleUtils.WriteWarning("Usage: save export <slot> <path>");
+                    ConsoleUtils.WriteWarning(L["SaveUsageExport"]);
                     return true;
                 }
                 return ExportSlot(slot, args[2].Value);
@@ -77,10 +80,29 @@ internal class SaveCommand : CommandBase
                 return SyncSummary(slot);
             case "delete":
                 return DeleteSlot(session, slot, slotIndex);
+            case "re9":
+                return Re9(slot, slotIndex);
             default:
-                ConsoleUtils.WriteWarning("Unknown action: " + action);
+                ConsoleUtils.WriteWarning(L["SaveUnknownAction", new object[] { action }]);
                 return true;
         }
+    }
+    private static bool Re9(ShellSaveSlot slot, int slotIndex)
+    {
+        if (slot.GameProgress != null && slot.GameKey != null)
+        {
+            slot.GameProgress.Chapter9UnlockBegin = slot.GameProgress.Chapter9SecretChallengePendingLifeUnlock = false;
+            slot.GameProgress.Chapter9SecretChallengeLifeTier = slot.GameProgress.Chapter9SecretChallengeSelectedLifeTier = 0;
+            Array.Clear(slot.GameProgress.Chapter9SongUnlocked);
+            slot.GameProgress.Chapter9SecretPassword = "0";
+            // 清除第九章所有影响解锁进度的收集品
+            foreach (var key in new List<string> { "liangrenhuihe", "m9beginning", "qiongdingguzhou", "themirage", "sundemimi", "nizhidaoma", "poyidomejiu", "poyidomegino" })
+            {
+                slot.GameKey.KeyMap.Remove(key);
+            }
+            ConsoleUtils.WriteSuccess(L["SaveRe9Done", new object[] { slotIndex }]);
+        }
+        return true;
     }
 
     // ── fetch / export ──
@@ -89,18 +111,18 @@ internal class SaveCommand : CommandBase
     {
         if (slot.Info == null)
         {
-            ConsoleUtils.WriteWarning("Slot info is null.");
+            ConsoleUtils.WriteWarning(L["SaveSlotInfoNull"]);
             return true;
         }
 
         try
         {
             slot.FetchAsync().GetAwaiter().GetResult();
-            ConsoleUtils.WriteSuccess($"Save file fetched for slot {slotIndex}.");
+            ConsoleUtils.WriteSuccess(L["SaveFetched", new object[] { slotIndex }]);
         }
         catch (Exception ex)
         {
-            ConsoleUtils.WriteError("Failed to fetch save file: " + ex.Message);
+            ConsoleUtils.WriteError(L["SaveFetchFailed", new object[] { ex.Message }]);
         }
 
         return true;
@@ -113,11 +135,11 @@ internal class SaveCommand : CommandBase
         try
         {
             File.WriteAllBytes(exportPath, slot.File!.ToZipBytes());
-            ConsoleUtils.WriteSuccess("Save file exported to: " + exportPath);
+            ConsoleUtils.WriteSuccess(L["SaveExported", new object[] { exportPath }]);
         }
         catch (Exception ex)
         {
-            ConsoleUtils.WriteError("Export failed: " + ex.Message);
+            ConsoleUtils.WriteError(L["SaveExportFailed", new object[] { ex.Message }]);
         }
 
         return true;
@@ -130,21 +152,21 @@ internal class SaveCommand : CommandBase
         if (!RequiresFetched(slot)) return true;
 
         if (Program.InfoTSV == null)
-            FluentConsole.DarkYellow.Line(Program.Localization["WarnInfoTSVNotLoaded"]);
+            FluentConsole.DarkYellow.Line(L["WarnInfoTSVNotLoaded"]);
 
         var issues = SaveChecker.Check(slot.File!, slot.Info?.CloudSummary, Program.DifficultyProvider);
 
         if (issues.Count == 0)
         {
-            ConsoleUtils.WriteSuccess("No problems detected in save file.");
+            ConsoleUtils.WriteSuccess(L["SaveCheckPassed"]);
             return true;
         }
 
-        ConsoleUtils.WriteWarning($"{issues.Count} issue(s) detected:");
+        ConsoleUtils.WriteWarning(L["SaveCheckIssueCount", new object[] { issues.Count }]);
         foreach (var issue in issues)
         {
             FluentConsole.Color(SeverityColor(issue.Severity))
-                .Line("  " + Program.Localization[issue.LocalizationKey, issue.Arguments]);
+                .Line("  " + L[issue.LocalizationKey, issue.Arguments]);
         }
 
         return true;
@@ -161,7 +183,7 @@ internal class SaveCommand : CommandBase
 
         if (record.Records.Count == 0)
         {
-            ConsoleUtils.WriteWarning("No game record found. Check if your save file is valid.");
+            ConsoleUtils.WriteWarning(L["SaveP3B27NoRecord"]);
             return true;
         }
 
@@ -171,12 +193,12 @@ internal class SaveCommand : CommandBase
 
         bool hasInfoTSV = Program.InfoTSV != null;
         if (!hasInfoTSV)
-            ConsoleUtils.WriteWarning("Couldn't find info.tsv. Use 'config info.info.tsv <path>' to specify.");
+            ConsoleUtils.WriteWarning(L["SaveP3B27NoInfoTSV"]);
 
         var views = ProjectRecords(record, provider);
 
         float currentRks = provider != null ? record.CalculateRankingScore(provider) : 0f;
-        FluentConsole.Cyan.Text("Ranking Score : ").White.Line(currentRks.ToString("F6"));
+        FluentConsole.Cyan.Text(L["SaveRankingScore"]).White.Line(currentRks.ToString("F6"));
 
         // ── P3：定数最高的 3 个满分成绩 ──
         var phiRecords = views
@@ -201,6 +223,13 @@ internal class SaveCommand : CommandBase
             .Take(count)
             .ToList();
 
+        // 一条都没查到达定数时 b27Entries 是空的，[^1] 会越界
+        if (b27Entries.Count == 0)
+        {
+            ConsoleUtils.WriteWarning(L["SaveP3B27Insufficient", new object[] { 0, count }]);
+            return true;
+        }
+
         double b27Rks = b27Entries[^1].RankingScore;
 
         for (int i = 0; i < b27Entries.Count; i++)
@@ -210,7 +239,7 @@ internal class SaveCommand : CommandBase
                 view.Record.Acc, view.Difficulty, currentRks, p3Difficulty, b27Rks);
 
             WriteRecordLine($"#{i + 1,-4}", view, view.RankingScore, Describe(view, hasInfoTSV),
-                suffix: suggestion.HasValue ? $"{suggestion:F3}%" : Program.Localization["P3B27NoSuggestion"],
+                suffix: suggestion.HasValue ? $"{suggestion:F3}%" : L["P3B27NoSuggestion"],
                 suffixColor: suggestion.HasValue ? ConsoleColor.Green : ConsoleColor.DarkGray);
         }
 
@@ -277,7 +306,7 @@ internal class SaveCommand : CommandBase
         var old = slot.Info;
         if (old == null)
         {
-            ConsoleUtils.WriteWarning("Slot info is null.");
+            ConsoleUtils.WriteWarning(L["SaveSlotInfoNull"]);
             return true;
         }
 
@@ -298,10 +327,10 @@ internal class SaveCommand : CommandBase
             }
             catch (Exception ex)
             {
-                cleanupWarning = Program.Localization["WarnUploadOldSlotNotDeleted", new object[] { ex.Message }];
+                cleanupWarning = L["WarnUploadOldSlotNotDeleted", new object[] { ex.Message }];
             }
 
-            ConsoleUtils.WriteSuccess("Save file uploaded successfully!");
+            ConsoleUtils.WriteSuccess(L["SaveUploaded"]);
             if (cleanupWarning != null)
                 ConsoleUtils.WriteWarning(cleanupWarning);
 
@@ -310,7 +339,7 @@ internal class SaveCommand : CommandBase
         }
         catch (Exception ex)
         {
-            ConsoleUtils.WriteError("Failed to upload save file: " + ex.Message);
+            ConsoleUtils.WriteError(L["SaveUploadFailed", new object[] { ex.Message }]);
         }
 
         return true;
@@ -326,14 +355,14 @@ internal class SaveCommand : CommandBase
             var summary = slot.RebuildSummary(Program.DifficultyProvider!);
             var save = slot.File!;
 
-            ConsoleUtils.WriteSuccess("Save file synced to summary.");
-            FluentConsole.DarkCyan.Text("Ranking Score : ").White.Line(summary.RankingScore.ToString("F6"))
-                .DarkCyan.Text("Challenge     : ").White.Line(save.GameProgress.ChallengeModeRank.ToString())
-                .DarkCyan.Text("Avatar        : ").White.Line(save.User.Avatar);
+            ConsoleUtils.WriteSuccess(L["SaveSynced"]);
+            FluentConsole.DarkCyan.Text(L["SaveRankingScore"]).White.Line(summary.RankingScore.ToString("F6"))
+                .DarkCyan.Text(L["SaveChallenge"]).White.Line(save.GameProgress.ChallengeModeRank.ToString())
+                .DarkCyan.Text(L["SaveAvatar"]).White.Line(save.User.Avatar);
         }
         catch (Exception ex)
         {
-            ConsoleUtils.WriteWarning("Failed to sync: " + ex.Message);
+            ConsoleUtils.WriteWarning(L["SaveSyncFailed", new object[] { ex.Message }]);
         }
 
         return true;
@@ -343,23 +372,23 @@ internal class SaveCommand : CommandBase
     {
         if (slot.Info == null)
         {
-            ConsoleUtils.WriteWarning("Slot info is null.");
+            ConsoleUtils.WriteWarning(L["SaveSlotInfoNull"]);
             return true;
         }
 
-        FluentConsole.Yellow.Line("Are you sure you want to delete this save? (y/N)");
+        FluentConsole.Yellow.Line(L["SaveDeleteConfirm"]);
         var key = Console.ReadKey(intercept: true);
         Console.WriteLine();
         if (key.Key != ConsoleKey.Y)
         {
-            ConsoleUtils.WriteWarning("Cancelled.");
+            ConsoleUtils.WriteWarning(L["OperationCancelledByUser"]);
             return true;
         }
 
         try
         {
             session.PlayerInfo!.DeleteSave(slot.Info).GetAwaiter().GetResult();
-            ConsoleUtils.WriteSuccess("Save file deleted from cloud.");
+            ConsoleUtils.WriteSuccess(L["SaveDeleted"]);
 
             // 人还站在被删掉的槽位里的话，先退回根目录
             ResetPathIfInsideSlot(slotIndex);
@@ -367,7 +396,7 @@ internal class SaveCommand : CommandBase
         }
         catch (Exception ex)
         {
-            ConsoleUtils.WriteError("Failed to delete: " + ex.Message);
+            ConsoleUtils.WriteError(L["SaveDeleteFailed", new object[] { ex.Message }]);
         }
 
         return true;
@@ -402,7 +431,7 @@ internal class SaveCommand : CommandBase
     {
         if (slot.File != null) return true;
 
-        ConsoleUtils.WriteWarning("Save file not fetched. Use 'save fetch' first.");
+        ConsoleUtils.WriteWarning(L["SaveNotFetched"]);
         return false;
     }
 
@@ -415,7 +444,7 @@ internal class SaveCommand : CommandBase
         var provider = Program.DifficultyProvider;
         if (provider != null && provider.IsLoaded) return true;
 
-        ConsoleUtils.WriteWarning(Program.Localization["WarnRksRequiresDifficultyTSV"]);
+        ConsoleUtils.WriteWarning(L["SaveDiffTSVRequired"]);
         return false;
     }
 

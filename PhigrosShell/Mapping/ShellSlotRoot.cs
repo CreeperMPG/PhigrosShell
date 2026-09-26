@@ -31,21 +31,12 @@ internal class ShellSlotRoot
     /// <summary>设置</summary>
     public PhigrosSettings? Settings => Slot?.File?.Settings;
 
-    /// <summary>
-    /// 成绩表。
-    /// <para>
-    /// 直接把 <c>GameRecord.Records</c> 提上来当目录用——<c>Records</c> 那一层只是
-    /// <c>.save</c> 里 <c>gameRecord</c> 条目的内部形状，用户没必要看见。
-    /// </para>
-    /// <para>
-    /// 没 <c>save fetch</c> 时返回 null（VFS 显示 <c>(null)</c>），与
-    /// <see cref="GameProgress"/> 等条目保持一致——**不要**改成返回空字典，
-    /// 那看起来像"存档里真的没有成绩"，会误导人。
-    /// </para>
-    /// </summary>
+    /// <summary>成绩表</summary>
     public Dictionary<string, SongDifficultySet<LevelRecord?>>? GameRecord
         => Slot?.File?.GameRecord.Records;
 
     /// <summary>游戏密钥</summary>
     public PhigrosKey? GameKey => Slot?.File?.GameKey;
+    public int? GameVersion => Slot?.File?.GameVersion;
+    public int? SaveVersion => Slot?.File?.SaveVersion;
 }

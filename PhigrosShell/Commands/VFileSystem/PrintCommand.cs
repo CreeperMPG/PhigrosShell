@@ -45,7 +45,8 @@ internal class PrintCommand : CommandBase
         {
             string? preview = directory.GetPreview(resolvedPath,
                 directory.ListEntries(System.IO.Path.GetDirectoryName(resolvedPath)?.Replace("\\", "/") ?? "/")
-                    .FirstOrDefault(e => resolvedPath.EndsWith(e.Name, StringComparison.OrdinalIgnoreCase))?.Type ?? VEntryType.Directory);
+                    .FirstOrDefault(e => resolvedPath.EndsWith(e.Name, StringComparison.OrdinalIgnoreCase))?.Type ?? VEntryType.Directory,
+                truncate: false);
 
             if (!string.IsNullOrEmpty(preview))
                 Console.WriteLine(preview);

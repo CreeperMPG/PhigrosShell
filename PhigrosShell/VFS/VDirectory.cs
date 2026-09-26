@@ -284,20 +284,20 @@ internal class VDirectory
 
     // ────────────────────────────── 预览 ──────────────────────────────
 
-    public string? GetPreview(string entryPath, VEntryType entryType = VEntryType.Directory)
+    public string? GetPreview(string entryPath, VEntryType entryType = VEntryType.Directory, bool truncate = true)
     {
         object? obj = Get(entryPath);
 
         switch (entryType)
         {
             case VEntryType.File:
-                return obj == null ? "(null)" : TruncatePreview(Sanitize(obj.ToString() ?? ""));
+                return obj == null ? "(null)" : TruncatePreview(Sanitize(obj.ToString() ?? ""), truncate);
 
             case VEntryType.Enumerable when obj is IEnumerable enumerable:
             {
                 var items = enumerable.Cast<object?>().Take(10).ToList();
                 string body = string.Join(", ", items.Select(RenderValue));
-                return TruncatePreview($"List => [{body}{(enumerable.Cast<object?>().Count() > 10 ? "..." : "]")}");
+                return TruncatePreview($"List => [{body}{(enumerable.Cast<object?>().Count() > 10 ? "..." : "]")}", truncate);
             }
             case VEntryType.Enumerable:
                 return "List => (Not enumerable)";
@@ -306,7 +306,7 @@ internal class VDirectory
             {
                 string body = string.Join(", ", dictionary.Keys.Cast<object?>()
                     .Select(k => $"{k}: {RenderValue(dictionary[k!])}"));
-                return TruncatePreview($"Dictionary => {{{body}}}");
+                return TruncatePreview($"Dictionary => {{{body}}}", truncate);
             }
             case VEntryType.Dictionary:
                 return "Dictionary => (Not a dictionary)";
@@ -322,7 +322,7 @@ internal class VDirectory
                 try
                 {
                     string? generated = generator(obj);
-                    return generated == null ? null : TruncatePreview(Sanitize(generated));
+                    return generated == null ? null : TruncatePreview(Sanitize(generated), truncate);
                 }
                 catch
                 {
@@ -652,9 +652,9 @@ internal class VDirectory
     /// 按**显示宽度**截断：用 <see cref="ConsoleUtils.GetDisplayWidth"/> 而不是
     /// <c>string.Length</c>——后者在中文/日文曲名上会算少一半，把后面的列挤歪。
     /// </summary>
-    private static string TruncatePreview(string text)
+    private static string TruncatePreview(string text, bool truncate = true)
     {
-        if (ConsoleUtils.GetDisplayWidth(text) <= PreviewWidth) return text;
+        if ((!truncate) || ConsoleUtils.GetDisplayWidth(text) <= PreviewWidth) return text;
 
         var builder = new System.Text.StringBuilder(PreviewWidth);
         int width = 0;

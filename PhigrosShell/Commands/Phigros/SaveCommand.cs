@@ -15,8 +15,8 @@ internal class SaveCommand : CommandBase
 
     private static LocalizationService L => Program.Localization;
 
-    /// <summary>难度序号 → 显示名，下标与 <c>SongDifficultySet</c> 一致</summary>
-    private static readonly string[] DifficultyNames = { "EZ", "HD", "IN", "AT", "Legacy" };
+    /// <summary>难度序号 → 显示名，下标与 <c>SongLevelSet</c> 一致</summary>
+    private static readonly string[] LevelNames = { "EZ", "HD", "IN", "AT", "Legacy" };
 
     /// <summary>曲名列的宽度</summary>
     private const int SongNameWidth = 50;
@@ -80,14 +80,23 @@ internal class SaveCommand : CommandBase
                 return SyncSummary(slot);
             case "delete":
                 return DeleteSlot(session, slot, slotIndex);
-            case "re9":
-                return Re9(slot, slotIndex);
+            case "re9p1":
+                return Re9P1(slot, slotIndex, ConsoleUtils.GetArgumentValue(args, "keepcollection") == null);
+            case "set9p2":
+                var step = args.Skip(2).First(val => val.Type == ShellArgumentType.Argument)?.Value;
+                int stepint = -1;
+                if (step == null || !int.TryParse(step, out stepint) || stepint < 0 || stepint > 5)
+                {
+                    ConsoleUtils.WriteWarning(L["SaveUsageSet9P2"]);
+                    return true;
+                }
+                return Set9P2(slot, slotIndex, stepint, ConsoleUtils.GetArgumentValue(args, "keepcollection") == null);
             default:
                 ConsoleUtils.WriteWarning(L["SaveUnknownAction", new object[] { action }]);
                 return true;
         }
     }
-    private static bool Re9(ShellSaveSlot slot, int slotIndex)
+    private static bool Re9P1(ShellSaveSlot slot, int slotIndex, bool clearCollection)
     {
         if (slot.GameProgress != null && slot.GameKey != null)
         {
@@ -95,12 +104,78 @@ internal class SaveCommand : CommandBase
             slot.GameProgress.Chapter9SecretChallengeLifeTier = slot.GameProgress.Chapter9SecretChallengeSelectedLifeTier = 0;
             Array.Clear(slot.GameProgress.Chapter9SongUnlocked);
             slot.GameProgress.Chapter9SecretPassword = "0";
-            // 清除第九章所有影响解锁进度的收集品
-            foreach (var key in new List<string> { "liangrenhuihe", "m9beginning", "qiongdingguzhou", "themirage", "sundemimi", "nizhidaoma", "poyidomejiu", "poyidomegino" })
+            if (clearCollection)
+            {
+                // 清除第九章第一部分所有影响解锁进度的收集品
+                foreach (var key in C9P1CollectionClearList)
+                {
+                    slot.GameKey.KeyMap.Remove(key);
+                }
+            }
+            else
+            {
+                FluentConsole.Gray.Line(L["SaveRe9KeepCollections"]);
+            }
+            ConsoleUtils.WriteSuccess(L["SaveRe9Done", new object[] { slotIndex }]);
+        }
+        return true;
+    }
+    private static void EnsureGameKeyState(ShellSaveSlot slot, string key, bool exist)
+    {
+        if (slot.GameKey != null)
+        {
+            if (exist)
+            {
+                if (!slot.GameKey.KeyMap.ContainsKey(key))
+                {
+                    slot.GameKey.KeyMap.Add(key, new double[] { 1.0, 0.0, 1.0, 0.0, 0.0 });
+                }
+            }
+            else
             {
                 slot.GameKey.KeyMap.Remove(key);
             }
-            ConsoleUtils.WriteSuccess(L["SaveRe9Done", new object[] { slotIndex }]);
+        }
+    }
+    private static bool Set9P2(ShellSaveSlot slot, int slotIndex, int step, bool modCollection)
+    {
+        if (slot.GameProgress != null && slot.GameKey != null)
+        {
+            slot.GameProgress.Chapter9Phase2Step = (byte)Math.Min(step, 4); // 0 ~ 4
+            slot.GameProgress.Chapter9Phase2Begin = step != 0;
+            slot.GameProgress.C9BaselineChallengeReached = step >= 4;
+            slot.GameProgress.Chapter9Phase2Passed = step >= 5;
+            int unlockCount = step switch
+            {
+                2 => 1,
+                3 => 2,
+                4 => 2,
+                5 => 6,
+                _ => 0
+            };
+            for (int i = 0; i < slot.GameProgress.Chapter9Phase2SongUnlocked.Length; i++)
+            {
+                slot.GameProgress.Chapter9Phase2SongUnlocked[i] = i < unlockCount;
+            }
+            if (step == 5)
+            {
+                slot.GameProgress.Completed = "4.0";
+            }
+            // 收集品处理
+            if (modCollection)
+            {
+                EnsureGameKeyState(slot, "thechaos", step >= 2);
+                EnsureGameKeyState(slot, "thenoise", step >= 4);
+                EnsureGameKeyState(slot, "thewall", step >= 4);
+                EnsureGameKeyState(slot, "thewinner", step >= 5);
+                EnsureGameKeyState(slot, "themessage", step >= 5);
+                EnsureGameKeyState(slot, "thelier", step >= 5);
+            }
+            else
+            {
+                FluentConsole.Gray.Line(L["SaveRe9KeepCollections"]);
+            }
+            ConsoleUtils.WriteSuccess(L["SaveRe9P2Done", new object[] { slotIndex }]);
         }
         return true;
     }
@@ -253,12 +328,12 @@ internal class SaveCommand : CommandBase
 
         foreach (var (songId, levels) in record.Records)
         {
-            for (int index = 0; index < DifficultyNames.Length; index++)
+            for (int index = 0; index < LevelNames.Length; index++)
             {
                 var level = levels[index];
                 if (level == null) continue;
 
-                views.Add(new RecordView(songId, DifficultyNames[index], level,
+                views.Add(new RecordView(songId, LevelNames[index], level,
                     provider?.GetDifficulty(songId, index) ?? 0f));
             }
         }
@@ -470,4 +545,37 @@ internal class SaveCommand : CommandBase
         /// <summary>单曲 RKS = 成绩系数 × 定数</summary>
         public double RankingScore => Record.GetRankingScore(Difficulty);
     }
+    public static readonly List<string> C9P1CollectionClearList = new List<string>
+    {
+        // C9P1
+        "nizhidaoma",
+        "m9beginning",
+        "qiongdingguzhou",
+        "domeabout1",
+        "domeabout2",
+        "domeabout3",
+        "domeabout4",
+        "domeabout5",
+        "domeabout6",
+        "poyidomejiu",
+        "poyidomegino",
+        "liangrenhuihe",
+        "themirage",
+        "sundemimi",
+        "guguthinking1",
+        "guguthinking2",
+        // C9P2
+        "heimu1" // 音乐游戏"Phigros"
+    };
+
+    public static readonly List<string> C9P2CollectionClearList = new List<string>
+    {
+        "blackhole",
+        "thechaos",
+        "thenoise",
+        "thewall",
+        "thewinner",
+        "themessage",
+        "thelier"
+    };
 }

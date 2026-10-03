@@ -32,7 +32,7 @@ internal class ShellSlotRoot
     public PhigrosSettings? Settings => Slot?.File?.Settings;
 
     /// <summary>成绩表</summary>
-    public Dictionary<string, SongDifficultySet<LevelRecord?>>? GameRecord
+    public Dictionary<string, SongLevelSet<LevelRecord?>>? GameRecord
         => Slot?.File?.GameRecord.Records;
 
     /// <summary>游戏密钥</summary>

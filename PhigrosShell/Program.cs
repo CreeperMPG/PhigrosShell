@@ -32,7 +32,7 @@ internal class Program
 
     public const string AppName = "PhiShell";
     public const bool IsBeta = false;
-    public const string Version = "1.3.1";
+    public const string Version = "1.3.2";
     public const bool IsDebug = false;
 
     public static void InitTSVFiles()
@@ -198,7 +198,7 @@ internal class Program
         // 难度容器：
         //   CanInstantiate —— 往 GameRecord 里 touch 一首新歌（new 一个 5 难度全 null 的容器）
         //   CanResetToNull —— 万一有 SongDifficultySet 类型的属性需要清空
-        VDirectoryTypeRegistry.Register(typeof(SongDifficultySet<>), info =>
+        VDirectoryTypeRegistry.Register(typeof(SongLevelSet<>), info =>
         {
             info.CanInstantiate = true;
             info.CanResetToNull = true;

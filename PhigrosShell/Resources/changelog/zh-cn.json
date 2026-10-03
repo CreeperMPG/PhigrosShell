@@ -1,10 +1,20 @@
 {
   "entries": [
     {
+      "version": "1.3.2",
+      "date": "2026-10-03 23:52",
+      "changes": [
+        "更新 PhiKits.Save API，将版本支持扩大到 Phigros 3.9.0 ~ 4.0.1",
+        "`save re9` 子命令更名为 `save re9p1`，添加 `-keepcollection` 选项，允许保留收藏品",
+        "`save` 命令添加 `set9p2 <slot> <progress>` 子命令，允许设置穹顶孤舟第二部分的解锁进度。`-keepcollection` 选项仍然适用。"
+      ]
+    },
+    {
       "version": "1.3.1",
       "date": "2026-09-26 19:52",
       "changes": [
         "更新 PhiKits.Save API，将版本支持扩大到 Phigros 3.9.0 ~ 4.0.0",
+        "`save` 命令添加 `re9` 子命令",
         "修复了 print 命令无法打印完全的 Bug",
         "优化本地化"
       ]
